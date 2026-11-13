@@ -1,0 +1,14 @@
+fastapi
+uvicorn
+jinja2
+python-multipart
+itsdangerous
+anthropic
+numpy
+opencv-python-headless
+scikit-image
+scipy
+fonttools
+Pillow
+reportlab
+openpyxl

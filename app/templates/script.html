@@ -1,0 +1,17 @@
+{% extends "base.html" %}{% block title %}{{s.name}}{% endblock %}{% block body %}
+<p class="small"><a href="/tests/{{t.id}}">← {{t.title}}</a></p>
+<h1>{{s.name or s.filename}} <span class="mut" style="font-weight:400">{{s.sid}}</span></h1>
+{% if s.status=='rendering' %}<div class="msg">The marked PDF is being redrawn… <a href="">refresh</a></div>{% endif %}
+<div class="card"><div class="row"><b style="font-size:19px">{{s.total}} / {{cfg.questions|sum(attribute='max')}}</b>
+{% for x in cfg.questions %}<span class="pill">Q{{x.q}} {{q[loop.index0]}}/{{x.max}}</span>{% endfor %}
+<a class="btn small" href="/scripts/{{s.id}}/marked.pdf">Download marked PDF</a><a class="btn small sec" href="/scripts/{{s.id}}/original.pdf" target="_blank">Original scan</a>
+<form method="post" action="/scripts/{{s.id}}/remark" onsubmit="return confirm('Mark this script again from the start? Current marks and notes will be replaced.')"><button class="small sec">Mark again</button></form></div>
+{% for f in (s.spec.flags or []) %}<div class="flag">⚑ {{f.part}}: {{f.text}}</div>{% endfor %}{% for w in s.warnings %}<div class="flag">⚑ {{w}}</div>{% endfor %}</div>
+{% if can_edit %}<details class="card"><summary>Change marks, name or ID</summary>
+<form method="post" action="/scripts/{{s.id}}/marks"><div class="grid2"><div><label>Name</label><input type="text" name="name" value="{{s.spec.name}}"></div><div><label>Student ID</label><input type="text" name="sid" value="{{s.spec.sid}}"></div></div>
+<div class="row" style="margin-top:8px">{% for x in cfg.questions %}{% for p in x.parts %}<div><label>{{p.id}} <span class="mut">/{{p.max}}</span></label>
+<select name="m_{{p.id}}">{% for v in range(p.max+1) %}<option {% if marks.get(p.id)==v %}selected{% endif %}>{{v}}</option>{% endfor %}</select></div>{% endfor %}{% endfor %}</div>
+<p><button>Save and redraw</button> <span class="small mut">The circled marks, question totals, cover and report score update. The written notes stay as they are.</span></p></form></details>
+{% else %}<p class="small mut">Only teachers can change marks.</p>{% endif %}
+<div class="pages">{% for f in prev %}<a href="/scripts/{{s.id}}/preview/{{f}}?v={{v}}" target="_blank"><img loading="lazy" src="/scripts/{{s.id}}/preview/{{f}}?v={{v}}" alt="page {{loop.index}}"></a>{% endfor %}</div>
+{% endblock %}

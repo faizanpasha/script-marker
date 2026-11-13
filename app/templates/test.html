@@ -1,0 +1,66 @@
+{% extends "base.html" %}{% block title %}{{t.title}}{% endblock %}{% block body %}
+<p class="small"><a href="/">← All tests</a></p><h1>{{t.title}}</h1>
+<p class="mut">{{cfg.teacher}}{% if cfg.section %} · Section {{cfg.section}}{% endif %}{% if cfg.date %} · {{cfg.date}}{% endif %}{% if total_max %} · {{total_max}} marks{% endif %}</p>
+
+<div class="card"><h2><span class="step">1</span>Marking key
+{% if t.setup_status=='confirmed' %}<span class="pill done">Confirmed</span>{% elif t.setup_status=='running' %}<span class="pill busy">Being read…</span>{% elif t.setup_status=='error' %}<span class="pill error">Problem</span>{% else %}<span class="pill">Needs your check</span>{% endif %}</h2>
+{% if t.setup_status=='running' %}<p>The marking key is being read. This takes about a minute; the page refreshes by itself.</p>
+{% else %}
+{% if t.setup_error %}<p class="flag">Automatic reading failed: {{t.setup_error}} — you can fill the table in by hand, or try again.</p>{% endif %}
+{% if cfg.setup_notes %}<p class="small mut">Note from the automatic reading: {{cfg.setup_notes}}</p>{% endif %}
+<details {% if t.setup_status!='confirmed' %}open{% endif %}><summary>{% if t.setup_status=='confirmed' %}Show / change the key setup{% else %}Check each question, then press “Save and confirm”{% endif %}</summary>
+<form method="post" action="/tests/{{t.id}}/setup">
+<div class="scroll"><table><tr><th style="width:60px">Q no.</th><th style="width:70px">Marks</th><th style="width:110px">Ends on script page</th><th>Parts and marks</th><th style="width:200px">Key region (key page : top–bottom)</th><th>Preview</th></tr>
+{% set qs = cfg.questions + [{} , {}] %}
+{% for x in qs %}<tr><td><input type="text" name="q{{loop.index0}}" value="{{x.q or ''}}"></td>
+<td><input type="text" name="max{{loop.index0}}" value="{{x.max or ''}}"></td>
+<td><input type="text" name="end{{loop.index0}}" value="{{x.end_page or ''}}"></td>
+<td><input type="text" name="parts{{loop.index0}}" value="{% for p in x.parts or [] %}{{p.id}}:{{p.max}}{% if not loop.last %}, {% endif %}{% endfor %}" placeholder="1(a):2, 1(b):3"></td>
+<td><input type="text" name="crop{{loop.index0}}" value="{% for c in x.key_crop or [] %}{{c[0]}}:{{c[1]}}-{{c[2]}}{% if not loop.last %}, {% endif %}{% endfor %}" placeholder="1:290-1060"></td>
+<td>{% if x.q and x.key_crop %}<a href="/tests/{{t.id}}/keypage/{{x.q}}.png" target="_blank">see key page</a>{% endif %}</td></tr>{% endfor %}
+</table></div><input type="hidden" name="rows" value="{{qs|length}}">
+<p class="small mut">“Ends on script page” decides where that question's marking-key page is inserted in the marked script (cover = page 1). “Key region” is the slice of the marking key shown on it — open <a href="/tests/{{t.id}}/keyimg/1.png" target="_blank">key page 1 with ruler</a> to read the numbers. Empty rows are ignored; use them to add a question.</p>
+<label>Marking policy (rules for every script)</label><textarea name="policy" style="min-height:150px">{{cfg.policy}}</textarea>
+<label>Teacher's precedents for this test (one per line — e.g. “1(a): ‘force per unit charge’ = field strength → 0”)</label><textarea name="precedents">{{cfg.precedents}}</textarea>
+<p class="row"><button>Save and confirm</button></form>
+<form method="post" action="/tests/{{t.id}}/setup/auto" onsubmit="return confirm('Read the marking key again automatically? Your changes to the table will be replaced.')"><button class="sec">Read the key again automatically</button></form></p>
+</details>{% endif %}</div>
+
+<div class="card"><h2><span class="step">2</span>Upload student scripts</h2>
+<form method="post" action="/tests/{{t.id}}/upload" enctype="multipart/form-data" class="row">
+<input type="file" name="files" multiple accept=".pdf,.zip" required style="max-width:420px"><button>Upload</button></form>
+<p class="small mut">One PDF per student, or one zip file containing all the PDFs. {{rows|length}} script(s) uploaded so far.</p></div>
+
+<div class="card"><h2><span class="step">3</span>Mark</h2>
+{% set todo = (counts.uploaded or 0) + (counts.error or 0) %}{% set done = counts.done or 0 %}
+{% if rows %}<div class="bar"><i style="width:{{ (100*done/rows|length)|round }}%"></i></div>
+<p>{{done}} of {{rows|length}} marked{% if busy %} · <b>{{busy}} in progress</b>{% endif %}{% if counts.error %} · <span class="flag">{{counts.error}} failed</span>{% endif %}</p>{% endif %}
+<div class="row"><form method="post" action="/tests/{{t.id}}/mark"><input type="hidden" name="mode" value="sample"><input type="hidden" name="n" value="2"><button class="sec" {% if not todo or busy %}disabled{% endif %}>Mark 2 sample scripts first</button></form>
+<form method="post" action="/tests/{{t.id}}/mark" onsubmit="return confirm('Mark all {{todo}} remaining script(s)?')"><input type="hidden" name="mode" value="all"><button {% if not todo or busy %}disabled{% endif %}>Mark all remaining ({{todo}})</button></form></div>
+<p class="small mut">Recommended: mark 2 samples, let the teacher check them and add any rules below, then mark the rest. Each script takes a few minutes.</p>
+{% if can_edit %}<details><summary>Teacher's rules after checking samples</summary><form method="post" action="/tests/{{t.id}}/precedents">
+<textarea name="precedents" placeholder="One rule per line, e.g.  3(a): straight line outside the sphere → M0 A0">{{cfg.precedents}}</textarea><p><button class="sec">Save rules</button></p></form></details>{% endif %}
+</div>
+
+<div class="card"><h2><span class="step">4</span>Results</h2>
+<div class="row" style="margin-bottom:10px"><a class="btn {% if not done %}sec{% endif %}" href="/tests/{{t.id}}/marked.zip">Download all marked scripts (zip)</a>
+<a class="btn sec" href="/tests/{{t.id}}/sheet.pdf">Marks sheet (PDF)</a><a class="btn sec" href="/tests/{{t.id}}/sheet.xlsx">Marks sheet (Excel)</a></div>
+<div class="scroll"><table><tr><th>Student</th><th>ID</th>{% for x in cfg.questions %}<th class="n">Q{{x.q}}<br><span class="small">/{{x.max}}</span></th>{% endfor %}<th class="n">Total<br><span class="small">/{{total_max}}</span></th><th class="n">%</th><th>Status</th><th></th></tr>
+{% for s in rows %}<tr class="{% if s.flags %}flagged{% endif %}"><td>{% if s.status=='done' %}<a href="/scripts/{{s.id}}"><b>{{s.name}}</b></a>{% else %}{{s.name or s.filename}}{% endif %}<div class="small mut">{{s.filename}}</div>
+{% for f in s.flags[:4] %}<div class="flag">⚑ {{f}}</div>{% endfor %}{% if s.error %}<div class="flag">{{s.error}}</div>{% endif %}</td>
+<td>{{s.sid or ''}}</td>
+{% if s.status=='done' %}{% for m in s.q %}<td class="n">{{m}}</td>{% endfor %}<td class="n"><b>{{s.total}}</b></td><td class="n">{{ (100*s.total/total_max)|round|int if total_max else '' }}</td>
+{% else %}<td colspan="{{cfg.questions|length + 2}}" class="mut n">—</td>{% endif %}
+<td><span class="pill {{ 'done' if s.status=='done' else 'error' if s.status=='error' else 'busy' if s.status in ('queued','marking','rendering') else '' }}">{{ {'uploaded':'Not marked','queued':'Waiting','marking':'Being marked','rendering':'Drawing marks','done':'Done','error':'Failed'}[s.status] }}</span></td>
+<td class="row">{% if s.status=='done' %}<a class="btn small sec" href="/scripts/{{s.id}}/marked.pdf">PDF</a>{% endif %}
+{% if s.status in ('uploaded','error') %}<form method="post" action="/scripts/{{s.id}}/delete" onsubmit="return confirm('Remove this script?')"><button class="small sec">Remove</button></form>{% endif %}</td></tr>
+{% else %}<tr><td colspan="9" class="mut">No scripts uploaded yet.</td></tr>{% endfor %}</table></div>
+{% if u.role=='admin' and cost %}<p class="small mut">Estimated API cost for this test so far: ${{ '%.2f'|format(cost) }} ({{model}}).</p>{% endif %}
+</div>
+{% if u.role=='admin' %}<form method="post" action="/tests/{{t.id}}/delete" onsubmit="return confirm('Delete this test and ALL its scripts and marked files? This cannot be undone.')"><button class="small sec">Delete this test</button></form>{% endif %}
+<script>
+var busy={{ 'true' if busy or t.setup_status=='running' else 'false' }},sig='{{t.setup_status}}|{{counts|tojson}}';
+if(busy)setInterval(function(){fetch('/tests/{{t.id}}/status.json').then(r=>r.json()).then(function(j){
+ if(j.setup+'|'+JSON.stringify(j.counts)!=sig&&!document.querySelector('textarea:focus,input:focus'))location.reload();sig=j.setup+'|'+JSON.stringify(j.counts)})},5000);
+</script>
+{% endblock %}

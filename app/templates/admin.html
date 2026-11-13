@@ -1,0 +1,16 @@
+{% extends "base.html" %}{% block body %}<h1>Users &amp; settings</h1>
+<div class="card"><h2>People who can log in</h2><div class="scroll"><table><tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th></th></tr>
+{% for x in users %}<tr><td>{{x.name}}</td><td>{{x.email}}</td><td>{{ROLE_LABEL[x.role]}}</td><td>{{'Active' if x.active else 'Disabled'}}</td>
+<td class="row"><form method="post" action="/admin/users/{{x.id}}"><input type="hidden" name="action" value="toggle"><button class="small sec">{{'Disable' if x.active else 'Enable'}}</button></form>
+<form method="post" action="/admin/users/{{x.id}}" class="row"><input type="hidden" name="action" value="password"><input type="password" name="password" placeholder="new password" style="width:150px" minlength="8"><button class="small sec">Set password</button></form></td></tr>{% endfor %}</table></div>
+<h2 style="margin-top:16px">Add a person</h2><form method="post" action="/admin/users"><div class="grid2">
+<div><label>Name</label><input type="text" name="name" required></div><div><label>Email</label><input type="email" name="email" required></div>
+<div><label>Role</label><select name="role"><option value="operator">Academic team — uploads, runs marking, downloads results</option><option value="teacher">Teacher — also changes marks and rules</option><option value="admin">Administrator — also manages users and settings</option></select></div>
+<div><label>Password (at least 8 characters)</label><input type="text" name="password" required minlength="8"></div></div><p><button>Add person</button></p></form></div>
+<div class="card"><h2>Settings</h2><form method="post" action="/admin/settings"><div class="grid2">
+<div><label>Anthropic API key — {{ 'saved' if key_set else ('taken from the server environment' if env_key else 'NOT SET') }}</label><input type="password" name="api_key" placeholder="{{ 'leave empty to keep the saved key' if key_set else 'sk-ant-…' }}" autocomplete="off"></div>
+<div><label>Model used for marking</label><select name="model">{% for m in models %}<option {% if m==model %}selected{% endif %}>{{m}}</option>{% endfor %}</select></div>
+<div><label>College name (on marks sheets)</label><input type="text" name="college" value="{{college}}"></div></div>
+<p><button>Save settings</button></p></form>
+<p class="small mut">The key is stored on this server only and is never shown to anyone. Usage so far: {{usage.n}} script(s), {{ '{:,}'.format(usage.a) }} input and {{ '{:,}'.format(usage.b) }} output tokens — about ${{ '%.2f'|format(cost) }} at the current model's list price.</p></div>
+{% endblock %}
