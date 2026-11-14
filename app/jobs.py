@@ -45,7 +45,7 @@ def run_setup(tid):
         d = store.test_dir(tid)
         npages = len(glob.glob(os.path.join(d, 'key', 'ms-*.png')))
         try:
-            found = keycrop.from_text(os.path.join(d, 'key.pdf'), [int(x['q']) for x in qs]) if not blocking else None
+            found = keycrop.from_text(os.path.join(d, 'key.pdf'), [int(x['q']) for x in qs], os.path.join(d, 'key')) if not blocking else None
         except Exception:
             traceback.print_exc(); found = None
         if found:

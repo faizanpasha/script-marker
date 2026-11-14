@@ -4,7 +4,9 @@ The model's coordinates for these regions proved unreliable, so when the key has
 (the college's own key format) the regions are measured from the PDF text instead. All values are in
 100-dpi page units (A4 = 827 x 1169), the same units the renderer uses.
 """
-import re, subprocess, html
+import re, subprocess, html, os
+import numpy as np
+from PIL import Image
 
 K = 100 / 72.0          # PDF points -> 100-dpi units
 
@@ -22,7 +24,7 @@ def words(pdf):
     return res
 
 
-def from_text(pdf, qnums):
+def from_text(pdf, qnums, key_dir=None):
     """{q: [[page, y0, y1], ...]} when a "Question N" heading is found for every question, else None."""
     ws = words(pdf)
     if not ws: return None
@@ -37,8 +39,21 @@ def from_text(pdf, qnums):
     npages = max(w[0] for w in ws)
     body = {}                                                                        # page -> (top, bottom) of its content
     for p in range(1, npages + 1):
-        ys = [(w[2], w[4]) for w in ws if w[0] == p and w[2] > 50 and w[4] < 1110]
-        if ys: body[p] = (min(y[0] for y in ys), max(y[1] for y in ys))
+        # a running footer ("... Page 1 of 4") is not part of any answer
+        foot = [w[2] for w in ws if w[0] == p and w[2] > 1040 and re.fullmatch(r'page', w[5], re.I)]
+        limit = (min(foot) - 6) if foot else 1125
+        ys = [(w[2], w[4]) for w in ws if w[0] == p and w[2] > 40 and w[4] < limit]
+        top = min((y[0] for y in ys), default=None); bot = max((y[1] for y in ys), default=None)
+        # answers are often pasted in as pictures, which the text does not see: measure the ink on the page image too
+        img = os.path.join(key_dir, f'ms-{p:02d}.png') if key_dir else None
+        if img and os.path.exists(img):
+            g = np.array(Image.open(img).convert('L').resize((827, 1169)))
+            rows = np.where((g[:, 40:787] < 190).sum(axis=1) > 2)[0]
+            rows = rows[(rows > 40) & (rows < limit)]
+            if len(rows):
+                top = float(rows[0]) if top is None else min(top, float(rows[0]))
+                bot = float(rows[-1]) if bot is None else max(bot, float(rows[-1]))
+        if top is not None: body[p] = (top, bot)
     out = {}
     for i, q in enumerate(order):
         p0, y0 = heads[q]
