@@ -29,10 +29,16 @@ def from_text(pdf, qnums, key_dir=None):
     ws = words(pdf)
     if not ws: return None
     heads = {}
-    for a, b in zip(ws, ws[1:]):
-        if a[5].lower() == 'question' and a[1] < 300 and a[0] == b[0] and abs(a[2] - b[2]) < 6:
-            n = re.sub(r'\D', '', b[5])
-            if n and int(n) in qnums and int(n) not in heads: heads[int(n)] = (a[0], a[2])
+    # a heading is the word "Question" with a bare number just to its right on the same line. Word order in the
+    # PDF is not reliable (keys built from pasted mark-scheme pages carry hidden text), so match by position.
+    nums = [w for w in ws if re.fullmatch(r'\d{1,2}', w[5])]
+    for a in ws:
+        if a[5].lower() != 'question' or a[1] > 300: continue
+        for b in nums:
+            if b[0] == a[0] and abs(b[2] - a[2]) < 6 and 0 <= b[1] - a[3] < 45:
+                n = int(b[5])
+                if n in qnums and n not in heads: heads[n] = (a[0], min(a[2], b[2]))
+                break
     order = sorted(qnums)
     if any(q not in heads for q in order): return None
     if [heads[q] for q in order] != sorted(heads[q] for q in order): return None     # headings must appear in order
@@ -50,9 +56,7 @@ def from_text(pdf, qnums, key_dir=None):
             g = np.array(Image.open(img).convert('L').resize((827, 1169)))
             rows = np.where((g[:, 40:787] < 190).sum(axis=1) > 2)[0]
             rows = rows[(rows > 40) & (rows < limit)]
-            if len(rows):
-                top = float(rows[0]) if top is None else min(top, float(rows[0]))
-                bot = float(rows[-1]) if bot is None else max(bot, float(rows[-1]))
+            if len(rows): top, bot = float(rows[0]), float(rows[-1])     # what is visible wins over (possibly hidden) text
         if top is not None: body[p] = (top, bot)
     out = {}
     for i, q in enumerate(order):
