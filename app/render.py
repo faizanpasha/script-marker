@@ -178,7 +178,7 @@ def _render(spec, cfg, src_pdf, out_pdf, preview_dir, key_dir):
             try:
                 if t == 'tick': p.tick(a[0], a[1], a[2] if len(a) > 2 else 1.0)
                 elif t == 'cross': p.cross(a[0], a[1], a[2] if len(a) > 2 else 1.0)
-                elif t == 'write': checked_write(p, n, a[0], a[1], str(a[2]), a[3] if len(a) > 3 else 9.5)
+                elif t == 'write': checked_write(p, n, a[0], a[1], str(a[2]), min(14, max(8.5, float(a[3]))) if len(a) > 3 else 9.5)
                 elif t == 'ellipse': p.ellipse(*a[:4])
                 elif t == 'arrow': p.arrow(*a[:5])
                 elif t == 'underline': p.underline(*a[:3])

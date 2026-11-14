@@ -1,7 +1,7 @@
 """Background work: key setup and the per-script marking pipeline."""
 import os, glob, re, shutil, traceback, threading
 from concurrent.futures import ThreadPoolExecutor
-from . import store, render, marking
+from . import store, render, marking, keycrop
 
 POOL = ThreadPoolExecutor(max_workers=int(os.environ.get('MARKER_WORKERS', '2')))
 _lock = threading.Lock()
@@ -41,6 +41,18 @@ def run_setup(tid):
         t = store.get_test(tid); cfg = t['cfg']
         qs, problems, tin, tout = marking.setup_key(tid)
         blocking = structure_problems(qs)
+        # where each question sits in the key: measured from the key's text when possible, else the model's estimate
+        d = store.test_dir(tid)
+        npages = len(glob.glob(os.path.join(d, 'key', 'ms-*.png')))
+        try:
+            found = keycrop.from_text(os.path.join(d, 'key.pdf'), [int(x['q']) for x in qs]) if not blocking else None
+        except Exception:
+            traceback.print_exc(); found = None
+        if found:
+            for x in qs: x['key_crop'] = found[int(x['q'])]
+        else:
+            missing = keycrop.sanitise(qs, npages)
+            if missing: problems.append('The marking-key page could not be located for question(s) ' + ', '.join(str(m) for m in missing) + '; it will be left out of the checked papers.')
         cfg['questions'] = qs; cfg['key_problems'] = blocking + problems; cfg['key_blocked'] = bool(blocking)
         cfg['setup_tok'] = [tin, tout]
         store.save_cfg(tid, cfg)

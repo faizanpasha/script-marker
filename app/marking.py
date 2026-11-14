@@ -166,7 +166,7 @@ MARK_SYSTEM = """You are an experienced A-Level Physics examiner (CAIE 9702) mar
 ## Ops
 ["tick", x, y, scale]      (x, y) = bottom point of the tick; scale 0.5-0.8. One at the END of every creditworthy point.
 ["cross", x, y, scale]     on every wrong answer / answer line.
-["write", x, y, "text", size]   x = left edge, y = baseline. Notes: size 9-9.5. Code labels such as "C1 M1 A0": size 8.5-9.
+["write", x, y, "text", size]   x = left edge, y = baseline. Notes: size 9.5 (never smaller than 9 - small writing is hard for students to read). Code labels such as "C1 M1 A0": size 9.
 ["ellipse", cx, cy, rx, ry]   ["arrow", x1, y1, x2, y2, curve]   ["underline", x1, x2, y]   ["caret", x, y]   ["strike", x1, x2, y]
 ["poly", [[x, y], ...]]    freehand stroke, e.g. the correct curve on the student's axes; compute the points from the physics and the axes scale you read off the grid.
 Text supports ^{..} and _{..} and the symbols ω π φ Δ ∝ √ ½ ² λ θ μ Ω.
