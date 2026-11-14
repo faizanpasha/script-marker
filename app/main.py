@@ -83,24 +83,27 @@ def home(request: Request):
 
 @app.post('/tests')
 def create_test(request: Request, title: str = Form(...), teacher: str = Form(''), section: str = Form(''),
-                date: str = Form(''), key: UploadFile = File(...), qp: UploadFile = File(None)):
+                notes: str = Form(''), key: UploadFile = File(...), qp: UploadFile = File(...),
+                files: list[UploadFile] = File(...)):
     u = user(request)
     cfg = {'title': title.strip(), 'subject': 'Physics 9702', 'teacher': teacher.strip(), 'section': section.strip(),
-           'date': date.strip(), 'college': store.setting('college', 'Heuser College for A-Levels'),
-           'questions': [], 'policy': marking.DEFAULT_POLICY, 'precedents': ''}
+           'date': time.strftime('%B %Y'), 'college': store.setting('college', 'Heuser College for A-Levels'),
+           'questions': [], 'policy': marking.DEFAULT_POLICY, 'precedents': notes.strip()}
     tid = store.q('INSERT INTO tests(title,cfg,created_by,created) VALUES(?,?,?,?)', (cfg['title'], json.dumps(cfg), u['id'], time.time()))
     d = store.test_dir(tid)
     try:
         save_upload(key, os.path.join(d, 'key.pdf'))
         if not is_pdf(os.path.join(d, 'key.pdf')): raise ValueError('The marking key must be a PDF file.')
         jobs.ingest_pdf(os.path.join(d, 'key.pdf'), os.path.join(d, 'key'), 'ms', 200)
-        if qp is not None and qp.filename:
-            save_upload(qp, os.path.join(d, 'qp.pdf'))
-            if not is_pdf(os.path.join(d, 'qp.pdf')): raise ValueError('The question paper must be a PDF file.')
-            jobs.ingest_pdf(os.path.join(d, 'qp.pdf'), os.path.join(d, 'qp'), 'p', 100)
+        save_upload(qp, os.path.join(d, 'qp.pdf'))
+        if not is_pdf(os.path.join(d, 'qp.pdf')): raise ValueError('The question paper must be a PDF file.')
+        jobs.ingest_pdf(os.path.join(d, 'qp.pdf'), os.path.join(d, 'qp'), 'p', 100)
+        added, skipped = add_uploads(tid, files)
+        if not added: raise ValueError('No student scripts were found. Upload a zip of PDFs, or a PDF.' + (' Skipped: ' + ', '.join(skipped[:5]) if skipped else ''))
     except Exception as e:
-        store.q('DELETE FROM tests WHERE id=?', (tid,)); shutil.rmtree(d, ignore_errors=True)
-        flash(request, f'Could not create the test: {e}'); return RedirectResponse('/', 303)
+        store.q('DELETE FROM scripts WHERE test_id=?', (tid,)); store.q('DELETE FROM tests WHERE id=?', (tid,)); shutil.rmtree(d, ignore_errors=True)
+        flash(request, f'Could not start: {e}'); return RedirectResponse('/', 303)
+    if skipped: flash(request, 'Some files were skipped: ' + ', '.join(skipped[:8]))
     store.q("UPDATE tests SET setup_status='running' WHERE id=?", (tid,))
     jobs.POOL.submit(jobs.run_setup, tid)
     return RedirectResponse(f'/tests/{tid}', 303)
@@ -128,7 +131,7 @@ def script_rows(t):
 def test_page(request: Request, tid: int):
     u = user(request); t = the_test(tid); rows = script_rows(t)
     counts = {}
-    for s in rows: counts[s['status']] = counts.get(s['status'], 0) + 1
+    for s in sorted(rows, key=lambda s: s['status']): counts[s['status']] = counts.get(s['status'], 0) + 1
     busy = sum(counts.get(k, 0) for k in ('queued', 'marking', 'rendering'))
     tin = sum(s['tok_in'] or 0 for s in rows); tout = sum(s['tok_out'] or 0 for s in rows)
     return page(request, 'test.html', u=u, t=t, cfg=t['cfg'], rows=rows, counts=counts, busy=busy,
@@ -138,7 +141,7 @@ def test_page(request: Request, tid: int):
 @app.get('/tests/{tid}/status.json')
 def test_status(request: Request, tid: int):
     user(request); t = the_test(tid)
-    c = {r['status']: r['n'] for r in store.q('SELECT status, COUNT(*) n FROM scripts WHERE test_id=? GROUP BY status', (tid,))}
+    c = {r['status']: r['n'] for r in store.q('SELECT status, COUNT(*) n FROM scripts WHERE test_id=? GROUP BY status ORDER BY status', (tid,))}
     return JSONResponse({'setup': t['setup_status'], 'counts': c})
 
 @app.post('/tests/{tid}/setup/auto')
@@ -146,50 +149,6 @@ def setup_auto(request: Request, tid: int):
     user(request); the_test(tid)
     store.q("UPDATE tests SET setup_status='running', setup_error=NULL WHERE id=?", (tid,))
     jobs.POOL.submit(jobs.run_setup, tid)
-    return RedirectResponse(f'/tests/{tid}', 303)
-
-@app.post('/tests/{tid}/setup')
-async def setup_save(request: Request, tid: int):
-    user(request); t = the_test(tid); cfg = t['cfg']; f = await request.form()
-    qs = []; errs = []
-    for i in range(int(f.get('rows', 0))):
-        qn = (f.get(f'q{i}') or '').strip()
-        if not qn: continue
-        try:
-            parts = []
-            for chunk in re.split(r'[,;\n]+', f.get(f'parts{i}', '')):
-                if not chunk.strip(): continue
-                pid, mx = chunk.rsplit(':', 1); parts.append({'id': pid.strip(), 'max': int(mx)})
-            crops = []
-            for chunk in re.split(r'[,;\n]+', f.get(f'crop{i}', '')):
-                if not chunk.strip(): continue
-                pg, rng = chunk.split(':'); y0, y1 = rng.split('-'); crops.append([int(pg), int(float(y0)), int(float(y1))])
-            end = (f.get(f'end{i}') or '').strip()
-            qd = {'q': int(qn), 'max': int(f.get(f'max{i}')), 'end_page': int(end) if end else None, 'key_crop': crops, 'parts': parts}
-            if not parts: qd['parts'] = [{'id': str(qd['q']), 'max': qd['max']}]
-            if sum(p['max'] for p in qd['parts']) != qd['max']:
-                errs.append(f"Q{qn}: the part marks add up to {sum(p['max'] for p in qd['parts'])}, not {qd['max']}")
-            qs.append(qd)
-        except Exception:
-            errs.append(f'Q{qn}: could not read this row - check the format')
-    ids = [p['id'] for x in qs for p in x['parts']]
-    if len(ids) != len(set(ids)): errs.append('Two parts have the same name')
-    cfg['questions'] = sorted(qs, key=lambda x: x['q'])
-    cfg['policy'] = f.get('policy', cfg.get('policy', '')); cfg['precedents'] = f.get('precedents', cfg.get('precedents', ''))
-    for k in ('title', 'teacher', 'section', 'date'):
-        if f.get(k) is not None: cfg[k] = f.get(k).strip()
-    store.save_cfg(tid, cfg)
-    render.clear_keypage_cache(os.path.join(store.test_dir(tid), 'key'))
-    ok = bool(qs) and not errs
-    store.q('UPDATE tests SET setup_status=? WHERE id=?', ('confirmed' if ok else 'review', tid))
-    flash(request, 'Marking key saved and confirmed.' if ok else 'Saved, but please fix: ' + '; '.join(errs or ['add at least one question']))
-    return RedirectResponse(f'/tests/{tid}', 303)
-
-@app.post('/tests/{tid}/precedents')
-def save_precedents(request: Request, tid: int, precedents: str = Form('')):
-    user(request, 'admin', 'teacher'); t = the_test(tid)
-    t['cfg']['precedents'] = precedents; store.save_cfg(tid, t['cfg'])
-    flash(request, 'Marking rules saved. They apply to scripts marked from now on; use "Mark again" on scripts already done.')
     return RedirectResponse(f'/tests/{tid}', 303)
 
 @app.get('/tests/{tid}/keypage/{qn}.png')
@@ -202,17 +161,9 @@ def keypage_png(request: Request, tid: int, qn: int):
     b = io.BytesIO(); im.resize((827, 1169)).save(b, 'PNG')
     return Response(b.getvalue(), media_type='image/png', headers={'Cache-Control': 'no-store'})
 
-@app.get('/tests/{tid}/keyimg/{n}.png')
-def keyimg(request: Request, tid: int, n: int):
-    user(request)
-    f = os.path.join(store.test_dir(tid), 'key', f'ms-{n:02d}.png')
-    if not os.path.exists(f): raise HTTPException(404)
-    b = io.BytesIO(); render.grid_image(f, 200).resize((827, 1169)).save(b, 'PNG')
-    return Response(b.getvalue(), media_type='image/png')
-
-@app.post('/tests/{tid}/upload')
-def upload_scripts(request: Request, tid: int, files: list[UploadFile] = File(...)):
-    user(request); the_test(tid); added = 0; skipped = []
+def add_uploads(tid, files):
+    """Store uploaded PDFs / zips of PDFs as scripts of a test. Returns (added, skipped names)."""
+    added = 0; skipped = []
     existing = {r['filename'] for r in store.q('SELECT filename FROM scripts WHERE test_id=?', (tid,))}
     def add_pdf(name, fsrc):
         nonlocal added
@@ -242,14 +193,31 @@ def upload_scripts(request: Request, tid: int, files: list[UploadFile] = File(..
             add_pdf(fn, up.file)
         elif fn:
             skipped.append(f'{fn} (only PDF or zip)')
+    return added, skipped
+
+@app.post('/tests/{tid}/upload')
+def upload_scripts(request: Request, tid: int, files: list[UploadFile] = File(...)):
+    user(request); the_test(tid)
+    added, skipped = add_uploads(tid, files)
     flash(request, f'{added} script(s) added.' + (' Skipped: ' + ', '.join(skipped[:8]) if skipped else ''))
+    return RedirectResponse(f'/tests/{tid}', 303)
+
+@app.post('/tests/{tid}/continue')
+def continue_anyway(request: Request, tid: int):
+    """The key check found problems; the user chose to mark anyway."""
+    user(request); t = the_test(tid)
+    if t['setup_status'] != 'review' or t['cfg'].get('key_blocked'):
+        flash(request, 'This test cannot be continued. Start again with a corrected marking key.')
+    else:
+        store.q("UPDATE tests SET setup_status='confirmed' WHERE id=?", (tid,))
+        n = jobs.start_marking(tid); flash(request, f'Marking started for {n} script(s).')
     return RedirectResponse(f'/tests/{tid}', 303)
 
 @app.post('/tests/{tid}/mark')
 def mark(request: Request, tid: int, mode: str = Form('all'), n: int = Form(2)):
     user(request); t = the_test(tid)
     if t['setup_status'] != 'confirmed':
-        flash(request, 'Confirm the marking key first (step 1).'); return RedirectResponse(f'/tests/{tid}', 303)
+        flash(request, 'The marking key has not been accepted yet.'); return RedirectResponse(f'/tests/{tid}', 303)
     if not (marking.api_key() or marking.MOCK):
         flash(request, 'No Anthropic API key is set. Ask the administrator to add it under Settings.'); return RedirectResponse(f'/tests/{tid}', 303)
     ids = [r['id'] for r in store.q("SELECT id FROM scripts WHERE test_id=? AND status IN ('uploaded','error') ORDER BY id", (tid,))]

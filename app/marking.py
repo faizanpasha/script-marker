@@ -106,13 +106,15 @@ Return ONE JSON object in a ```json block:
     "key_crop": [[key_page, y0, y1]],
     "parts": [{"id": "1(a)", "max": 2}, {"id": "1(b)", "max": 3}]}
  ],
- "notes": "anything the teacher should check, or empty"}
+ "problems": ["..."]}
 
 - "q": question number; "max": its total marks; the part maxima must add up to it. A question without parts has one part whose id is the question number, e.g. "3".
 - "parts": the smallest units that carry their own [n] marks tag in the paper, e.g. "2(b)(i)".
 - "end_page": the page of the QUESTION PAPER / student script on which the question ends (the cover is page 1). If no question paper is given, use null.
 - "key_crop": the region(s) of the marking key that belong to this question, as [key page number, top y, bottom y] in grid units. Include the question's heading and all its rows, with ~10 units of margin, without touching the next question. A question that continues onto the next key page has two entries.
-Read the marks from the key itself; do not guess."""
+Read the marks from the key itself; do not guess.
+
+"problems": check the key before it is used and list every real problem in plain, short English (one sentence each), for example: marks in the key that do not add up to the question total; a question or part in the question paper with no answer in the key (or the reverse); the key and the question paper being from different tests; mark totals that differ between key and paper; pages that are unreadable or cut off; an answer in the key that is clearly wrong physics or a calculation whose numbers do not work out. Do not list style remarks or things that are fine. Use [] when the key is sound."""
 
 
 def setup_key(tid):
@@ -122,7 +124,7 @@ def setup_key(tid):
         n = len(glob.glob(os.path.join(d, 'key', 'ms-*.png')))
         qs = [{'q': i + 1, 'max': 4, 'end_page': 2 + i, 'key_crop': [[1, 60 + 200 * i, 250 + 200 * i]],
                'parts': [{'id': f'{i + 1}(a)', 'max': 2}, {'id': f'{i + 1}(b)', 'max': 2}]} for i in range(3)]
-        return qs, f'MOCK setup ({n} key pages)', 0, 0
+        return qs, ([] if os.environ.get('MARKER_MOCK_PROBLEM') != '1' else ['MOCK problem: Q2 marks do not add up.']), 0, 0
     content = _key_blocks(tid)
     qp = sorted(glob.glob(os.path.join(d, 'qp', 'p-*.png')))
     for i, f in enumerate(qp, 1):
@@ -130,7 +132,7 @@ def setup_key(tid):
     content.append(_txt('Return the JSON now.' if qp else 'No question paper was uploaded. Return the JSON now.'))
     text, tin, tout = _call(SETUP_SYSTEM, content)
     j = _json(text)
-    return j.get('questions', []), j.get('notes', ''), tin, tout
+    return j.get('questions', []), [str(x) for x in j.get('problems', []) if x], tin, tout
 
 
 # ------------------------------------------------------------------ marking
@@ -214,7 +216,7 @@ def mark_script(tid, cfg, page_files, filename):
     content = _key_blocks(tid)
     content.append(_txt('TEST: ' + cfg.get('title', '') + '\n\nTEST STRUCTURE\n' + _structure(cfg)
                         + '\n\nMARKING POLICY\n' + (cfg.get('policy') or DEFAULT_POLICY)
-                        + '\n\nTEACHER PRECEDENTS FOR THIS TEST (apply to every script)\n' + (cfg.get('precedents') or '(none yet)')))
+                        + '\n\nNOTES FROM THE TEACHER FOR THIS TEST (apply to every script)\n' + (cfg.get('precedents') or '(none yet)')))
     content[-1]['cache_control'] = {'type': 'ephemeral'}       # everything above is the same for every script
     for i, f in enumerate(page_files, 1):
         content += [_txt(f'STUDENT SCRIPT page {i} of {len(page_files)}:'), _img(render.grid_image(f, 150))]

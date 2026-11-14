@@ -1,21 +1,24 @@
 {% extends "base.html" %}{% block body %}
-<h1>Tests</h1>
-{% if not has_key %}<div class="msg">No Anthropic API key is set yet, so marking cannot run. {% if u.role=='admin' %}Add it under <a href="/admin">Users &amp; settings</a>.{% else %}Ask the administrator to add it.{% endif %}</div>{% endif %}
-<div class="card"><div class="scroll"><table><tr><th>Test</th><th class="n">Scripts</th><th class="n">Marked</th><th>Marking key</th><th></th></tr>
-{% for t in tests %}<tr><td><a href="/tests/{{t.id}}"><b>{{t.title}}</b></a></td><td class="n">{{t.n}}</td><td class="n">{{t.done}}</td>
-<td>{{ {'none':'Not set up','running':'Being read…','review':'Needs your check','confirmed':'Confirmed','error':'Problem'}[t.setup_status] }}</td>
-<td><a class="btn small sec" href="/tests/{{t.id}}">Open</a></td></tr>
-{% else %}<tr><td colspan="5" class="mut">No tests yet. Create the first one below.</td></tr>{% endfor %}</table></div></div>
-<div class="card"><h2>Create a new test</h2>
-<form method="post" action="/tests" enctype="multipart/form-data">
-<div class="grid2"><div><label>Test name</label><input type="text" name="title" required placeholder="A2 Third Monthly Assessment (Electric Fields + Thermal)"></div>
-<div><label>Teacher</label><input type="text" name="teacher"></div>
-<div><label>Section / batch</label><input type="text" name="section" placeholder="G1"></div>
-<div><label>Test date</label><input type="text" name="date" placeholder="November 2026"></div>
-<div><label>Marking key (PDF) — required</label><input type="file" name="key" accept="application/pdf" required></div>
-<div><label>Question paper (PDF) — recommended</label><input type="file" name="qp" accept="application/pdf"></div></div>
-<p class="mut small">Subject: Physics 9702. After you press Create, the marking key is read automatically (about a minute) and shown for you to check.</p>
-<button>Create test</button></form></div>
-<details class="card"><summary>Change my password</summary><form method="post" action="/account/password" style="max-width:340px">
+<div class="narrow">
+<h1>Mark a test</h1>
+<p class="mut">Upload three things, press Start, and download the checked papers when they are ready.</p>
+{% if not has_key %}<div class="msg">Marking cannot run yet: no Anthropic API key is set. {% if u.role=='admin' %}Add it under <a href="/admin">Users &amp; settings</a>.{% else %}Ask the administrator to add it.{% endif %}</div>{% endif %}
+<form method="post" action="/tests" enctype="multipart/form-data" id="f">
+<div class="card"><label style="margin-top:0">Test name</label><input type="text" name="title" required placeholder="A2 Third Monthly Assessment">
+<div class="grid2"><div><label>Teacher</label><input type="text" name="teacher"></div><div><label>Section</label><input type="text" name="section" placeholder="G1"></div></div></div>
+<div class="card stepc"><span class="step">1</span><div><h2>Marking key</h2><span class="small mut">PDF</span><input class="file" type="file" name="key" accept="application/pdf,.pdf" required></div></div>
+<div class="card stepc"><span class="step">2</span><div><h2>Question paper</h2><span class="small mut">PDF</span><input class="file" type="file" name="qp" accept="application/pdf,.pdf" required></div></div>
+<div class="card stepc"><span class="step">3</span><div><h2>Student scripts</h2><span class="small mut">One zip file with all the scanned PDFs, or PDF files (one per student)</span><input class="file" type="file" name="files" accept=".pdf,.zip" multiple required></div></div>
+<div class="card"><label style="margin-top:0">Notes for marking (optional)</label>
+<textarea name="notes" placeholder="Anything the marker should know for this test. For example:&#10;Q3 graph: accept a straight line inside the sphere.&#10;Q5(b): give the consistency mark even if the values are wrong."></textarea></div>
+<button class="big" id="go">Start marking</button>
+<p class="small mut" id="wait" style="display:none;text-align:center">Uploading… please keep this page open until it changes.</p>
+</form>
+{% if tests %}<h2 style="margin-top:34px">Earlier tests</h2><div class="card"><table>
+{% for t in tests %}<tr><td><a href="/tests/{{t.id}}"><b>{{t.title}}</b></a></td><td class="mut small">{{t.done}} of {{t.n}} marked</td>
+<td style="text-align:right"><a class="btn small sec" href="/tests/{{t.id}}">Open</a></td></tr>{% endfor %}</table></div>{% endif %}
+<details class="card"><summary>Change my password</summary><form method="post" action="/account/password">
 <label>Current password</label><input type="password" name="old" required><label>New password</label><input type="password" name="new" required minlength="8"><p><button class="sec">Change password</button></p></form></details>
+</div>
+<script>document.getElementById('f').addEventListener('submit',function(){var b=document.getElementById('go');b.disabled=true;b.textContent='Uploading…';document.getElementById('wait').style.display='block'});</script>
 {% endblock %}

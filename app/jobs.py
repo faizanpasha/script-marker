@@ -15,16 +15,44 @@ def ingest_pdf(src, out_dir, prefix, dpi):
     return out
 
 
+def structure_problems(qs):
+    """Problems in the question structure that make marking impossible or unreliable."""
+    out = []
+    if not qs: return ['No questions could be read from the marking key.']
+    ids = [p.get('id') for x in qs for p in x.get('parts', [])]
+    if len(ids) != len(set(ids)): out.append('Two parts of the key were read with the same name.')
+    for x in qs:
+        parts = x.get('parts') or []
+        if not parts: out.append(f"Question {x.get('q')}: no parts were read.")
+        elif sum(int(p.get('max', 0)) for p in parts) != int(x.get('max', -1)):
+            out.append(f"Question {x.get('q')}: the part marks add up to {sum(int(p.get('max', 0)) for p in parts)}, but the question total is {x.get('max')}.")
+    return out
+
+
+def start_marking(tid):
+    ids = [r['id'] for r in store.q("SELECT id FROM scripts WHERE test_id=? AND status IN ('uploaded','error') ORDER BY id", (tid,))]
+    queue(ids)
+    return len(ids)
+
+
 def run_setup(tid):
+    """Read the marking key, check it, and start marking if it is sound."""
     try:
         t = store.get_test(tid); cfg = t['cfg']
-        qs, notes, tin, tout = marking.setup_key(tid)
-        cfg['questions'] = qs; cfg['setup_notes'] = notes
+        qs, problems, tin, tout = marking.setup_key(tid)
+        blocking = structure_problems(qs)
+        cfg['questions'] = qs; cfg['key_problems'] = blocking + problems; cfg['key_blocked'] = bool(blocking)
+        cfg['setup_tok'] = [tin, tout]
         store.save_cfg(tid, cfg)
         render.clear_keypage_cache(os.path.join(store.test_dir(tid), 'key'))
-        store.q("UPDATE tests SET setup_status='review', setup_error=NULL WHERE id=?", (tid,))
+        if cfg['key_problems']:
+            store.q("UPDATE tests SET setup_status='review', setup_error=NULL WHERE id=?", (tid,))
+        else:
+            # queue first, so the page never sees "key accepted" with nothing in progress
+            start_marking(tid)
+            store.q("UPDATE tests SET setup_status='confirmed', setup_error=NULL WHERE id=?", (tid,))
     except Exception as e:
-        traceback.print_exc()
+        if not isinstance(e, marking.MarkingError): traceback.print_exc()
         store.q("UPDATE tests SET setup_status='error', setup_error=? WHERE id=?", (str(e), tid))
 
 
