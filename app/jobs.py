@@ -3,7 +3,7 @@ import os, glob, re, shutil, traceback, threading
 from concurrent.futures import ThreadPoolExecutor
 from . import store, render, marking
 
-POOL = ThreadPoolExecutor(max_workers=int(os.environ.get('MARKER_WORKERS', '3')))
+POOL = ThreadPoolExecutor(max_workers=int(os.environ.get('MARKER_WORKERS', '2')))
 _lock = threading.Lock()
 
 

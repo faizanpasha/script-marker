@@ -9,7 +9,7 @@ from .redpen import Page, report, _measure
 
 BLUE = np.array([40, 130, 225], np.float32)
 W, H = 1654, 2339
-RENDER_SLOTS = threading.Semaphore(max(1, (os.cpu_count() or 2) - 1))
+RENDER_SLOTS = threading.Semaphore(int(os.environ.get('MARKER_RENDERS', '1')))   # one render at a time keeps memory low
 _DJ = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'fonts') + os.sep
 
 
@@ -129,18 +129,16 @@ def render(spec, cfg, src_pdf, out_pdf, preview_dir, key_dir):
 
 
 def _render(spec, cfg, src_pdf, out_pdf, preview_dir, key_dir):
+    """Pages are drawn one at a time and written to disk, so memory stays small however long the script is."""
     warns = []
     tmp = tempfile.mkdtemp(prefix='mk_')
     try:
         files = rasterise(src_pdf, tmp, 200, 'h')
         npg = len(files)
         seed = abs(hash(str(spec.get('sid')))) % 10000
-        pages = {}
-        def page(n):
-            if n not in pages: pages[n] = Page(files[n - 1], seed=seed + n)
-            return pages[n]
-        def checked_write(n, x, y, text, sz):
-            p = page(n)
+        acts = {}                                   # page number -> list of functions(Page)
+        def on(n, fn): acts.setdefault(int(n), []).append(fn)
+        def checked_write(p, n, x, y, text, sz):
             w = _measure(text, sz)
             frac = _ink_fraction(p.img.mean(axis=2), x, y, w, sz)
             if x + w > 815: warns.append(f'p{n}: note runs off the right edge: "{text[:40]}" at ({x},{y})')
@@ -150,66 +148,54 @@ def _render(spec, cfg, src_pdf, out_pdf, preview_dir, key_dir):
         tot = q_totals(spec, cfg); total = sum(tot); maxes = [qc['max'] for qc in cfg['questions']]
         # cover page: marks table, circled total, short comment
         cov = spec.get('cover') or {}
-        p = page(1)
-        for (x, y), m in zip(cov.get('cells', []), tot):
-            p.write(x - (6 if m >= 10 else 0), y, str(m), 17)
-        if cov.get('total'):
-            x, y = cov['total']; p.write(x - (6 if total >= 10 else 0), y, str(total), 19); p.ellipse(x + 8, y - 8, 30, 20)
-        if cov.get('note'):
-            x, y = cov['note']
-            for i, ln in enumerate(spec.get('cover_note', [])[:3]):
-                p.write(x, y + i * 24, ln, 13 if i == 0 else 11)
+        def cover(p):
+            for (x, y), m in zip(cov.get('cells') or [], tot):
+                p.write(x - (6 if m >= 10 else 0), y, str(m), 17)
+            if cov.get('total'):
+                x, y = cov['total']; p.write(x - (6 if total >= 10 else 0), y, str(total), 19); p.ellipse(x + 8, y - 8, 30, 20)
+            if cov.get('note'):
+                x, y = cov['note']
+                for i, ln in enumerate(spec.get('cover_note', [])[:3]):
+                    p.write(x, y + i * 24, ln, 13 if i == 0 else 11)
+        on(1, cover)
         # circled part scores
-        for s in spec.get('scores', []):
-            if s.get('page') and 1 <= int(s['page']) <= npg:
-                page(int(s['page'])).score(s.get('x', 26), s['y'], str(s['mark']))
+        for sc in spec.get('scores', []):
+            if sc.get('page') and 1 <= int(sc['page']) <= npg and sc.get('y') is not None:
+                on(sc['page'], lambda p, sc=sc: p.score(sc.get('x', 26), sc['y'], str(sc['mark'])))
             else:
-                warns.append(f'part {s.get("part")}: no page/position for the circled mark')
+                warns.append(f'part {sc.get("part")}: no page/position for the circled mark')
         # "Qn = x/y" lines
         for qc, m in zip(cfg['questions'], tot):
             pos = (spec.get('qtotal') or {}).get(str(qc['q']))
-            if not pos: continue
-            n, x, y = int(pos[0]), pos[1], pos[2]
-            checked_write(n, x, y, f"Q{qc['q']} = {m}/{qc['max']}", 13)
-            if m == qc['max']: page(n).write(x + 10, y + 24, 'Excellent!', 11)
+            if not pos or not 1 <= int(pos[0]) <= npg: continue
+            def qline(p, n=int(pos[0]), x=pos[1], y=pos[2], qc=qc, m=m):
+                checked_write(p, n, x, y, f"Q{qc['q']} = {m}/{qc['max']}", 13)
+                if m == qc['max']: p.write(x + 10, y + 24, 'Excellent!', 11)
+            on(pos[0], qline)
         # free ops
+        def run_op(p, n, op):
+            t, a = op[0], op[1:]
+            try:
+                if t == 'tick': p.tick(a[0], a[1], a[2] if len(a) > 2 else 1.0)
+                elif t == 'cross': p.cross(a[0], a[1], a[2] if len(a) > 2 else 1.0)
+                elif t == 'write': checked_write(p, n, a[0], a[1], str(a[2]), a[3] if len(a) > 3 else 9.5)
+                elif t == 'ellipse': p.ellipse(*a[:4])
+                elif t == 'arrow': p.arrow(*a[:5])
+                elif t == 'underline': p.underline(*a[:3])
+                elif t == 'caret': p.caret(*a[:2])
+                elif t == 'strike': p.strike(*a[:3])
+                elif t == 'dot': p.dot(*a[:2])
+                elif t == 'poly': p._poly(a[0], wob=0.25)
+                elif t == 'score': pass   # scores come from spec['scores']
+                else: warns.append(f'p{n}: unknown op {t!r} ignored')
+            except Exception as e:
+                warns.append(f'p{n}: op {op!r} failed: {e}')
         for k, ops in (spec.get('pages') or {}).items():
             n = int(k)
             if not 1 <= n <= npg: warns.append(f'ops given for page {n}, which does not exist'); continue
-            p = page(n)
-            for op in ops:
-                t, a = op[0], op[1:]
-                try:
-                    if t == 'tick': p.tick(a[0], a[1], a[2] if len(a) > 2 else 1.0)
-                    elif t == 'cross': p.cross(a[0], a[1], a[2] if len(a) > 2 else 1.0)
-                    elif t == 'write': checked_write(n, a[0], a[1], str(a[2]), a[3] if len(a) > 3 else 9.5)
-                    elif t == 'ellipse': p.ellipse(*a[:4])
-                    elif t == 'arrow': p.arrow(*a[:5])
-                    elif t == 'underline': p.underline(*a[:3])
-                    elif t == 'caret': p.caret(*a[:2])
-                    elif t == 'strike': p.strike(*a[:3])
-                    elif t == 'dot': p.dot(*a[:2])
-                    elif t == 'poly': p._poly(a[0], wob=0.25)
-                    elif t == 'score': pass   # scores come from spec['scores']
-                    else: warns.append(f'p{n}: unknown op {t!r} ignored')
-                except Exception as e:
-                    warns.append(f'p{n}: op {op!r} failed: {e}')
+            for op in ops: on(n, lambda p, n=n, op=op: run_op(p, n, op))
+
         # examiner's report: on the last page if it is blank, otherwise on an added page
-        last = np.array(Image.open(files[-1]).convert('L'))
-        body = last[200:-200, 150:-150]
-        extra = float((body < 120).mean()) > 0.004
-        if extra:
-            blank = os.path.join(tmp, 'blank.png'); Image.new('RGB', (W, H), 'white').save(blank)
-            rp = Page(blank, seed=seed + 99)
-            warns.append('student wrote on the last page - report placed on an added page')
-        else:
-            rp = page(npg)
-            rp.rng = np.random.default_rng(seed + 99)
-        red = None
-        if not extra and (str(npg) in (spec.get('pages') or {}) or any(int(s.get('page', 0)) == npg for s in spec.get('scores', []))):
-            red = rp.render()      # keep red marks already on that page
-            blank = os.path.join(tmp, 'last.png'); red.save(blank); rp = Page(blank, seed=seed + 99)
-        rp.ink_rgb = BLUE
         pct = round(100 * total / max(1, sum(maxes)))
         items = [('title', "Examiner's Report"),
                  ('sub', f"{spec.get('name', '')} ({spec.get('sid', '')})  -  {cfg.get('title', '')}"),
@@ -219,22 +205,46 @@ def _render(spec, cfg, src_pdf, out_pdf, preview_dir, key_dir):
         items += [('gap', ''), ('head', 'Areas to improve')] + [('bullet', b) for b in spec.get('improve', [])]
         if spec.get('next'): items += [('gap', ''), ('head', 'Next steps')] + [('bullet', b) for b in spec['next']]
         items += [('gap', ''), ('para', spec.get('closing', ''))]
-        yend = report(rp, [(k, t) for k, t in items if k == 'gap' or t])
-        if yend > 1130: warns.append('examiner report is too long for one page - shorten it')
-        if not extra: pages[npg] = rp
+        items = [(k, t) for k, t in items if k == 'gap' or t]
+        def report_on(img_path):
+            rp = Page(img_path, seed=seed + 99); rp.ink_rgb = BLUE
+            if report(rp, items) > 1130: warns.append('examiner report is too long for one page - shorten it')
+            return rp.render()
+        last = np.array(Image.open(files[-1]).convert('L'))
+        extra = float((last[200:-200, 150:-150] < 120).mean()) > 0.004
+        del last
+        if extra: warns.append('student wrote on the last page - report placed on an added page')
 
         ends = {int(qc['end_page']): qc['q'] for qc in cfg['questions'] if qc.get('end_page') and qc.get('key_crop')}
-        out = []; os.makedirs(preview_dir, exist_ok=True)
+        os.makedirs(preview_dir, exist_ok=True)
         for f in glob.glob(os.path.join(preview_dir, '*.png')): os.remove(f)
+        jpgs = []
         def add(im, tag):
-            out.append(im.convert('RGB'))
-            im.resize((827, 1169)).save(os.path.join(preview_dir, f'm{len(out):02d}_{tag}.png'))
+            im = im.convert('RGB')
+            jp = os.path.join(tmp, f'o{len(jpgs) + 1:03d}.jpg'); im.save(jp, 'JPEG', quality=85); jpgs.append(jp)
+            im.resize((827, 1169)).save(os.path.join(preview_dir, f'm{len(jpgs):02d}_{tag}.png'))
         for n in range(1, npg + 1):
-            add(pages[n].render() if n in pages else Image.open(files[n - 1]), f's{n:02d}')
+            if n in acts:
+                pg = Page(files[n - 1], seed=seed + n)
+                for fn in acts[n]: fn(pg)
+                im = pg.render(); del pg
+            else:
+                im = Image.open(files[n - 1])
+            if n == npg and not extra:              # blue report over the (red-marked) last page
+                flat = os.path.join(tmp, 'last.png'); im.save(flat); im = report_on(flat)
+            add(im, f's{n:02d}'); del im
             if n in ends: add(keypage(cfg, ends[n], key_dir), f'k{ends[n]:02d}')
-        if extra: add(rp.render(), 'report')
+        if extra:
+            blank = os.path.join(tmp, 'blank.png'); Image.new('RGB', (W, H), 'white').save(blank)
+            add(report_on(blank), 'report')
+        # assemble the PDF from the JPEG files (embedded as they are, one A4 page each)
+        from reportlab.pdfgen import canvas
+        from reportlab.lib.pagesizes import A4
         os.makedirs(os.path.dirname(out_pdf), exist_ok=True)
-        out[0].save(out_pdf, save_all=True, append_images=out[1:], resolution=200, quality=85)
+        c = canvas.Canvas(out_pdf + '.tmp', pagesize=A4)
+        for jp in jpgs:
+            c.drawImage(jp, 0, 0, width=A4[0], height=A4[1]); c.showPage()
+        c.save(); os.replace(out_pdf + '.tmp', out_pdf)
         return tot, warns
     finally:
         shutil.rmtree(tmp, ignore_errors=True)

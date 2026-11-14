@@ -19,6 +19,12 @@
 <div class="row">{% if not cfg.key_blocked %}<form method="post" action="/tests/{{t.id}}/continue" onsubmit="return confirm('Mark all scripts with this key although problems were found?')"><button class="sec">Mark anyway</button></form>{% endif %}
 <a class="btn" href="/">Start again with a corrected key</a></div></div>
 
+{% elif (counts.uploaded or 0) and t.setup_status=='confirmed' and not busy %}
+<div class="card"><b class="flag" style="font-size:16px">Marking was interrupted</b>
+<p>{{done}} of {{rows|length}} scripts are done; {{counts.uploaded}} are still waiting. Finished scripts are kept.</p>
+<form method="post" action="/tests/{{t.id}}/mark"><button>Continue marking</button></form>
+{% if done %}<p class="small" style="margin-bottom:0"><a href="/tests/{{t.id}}/marked.zip">Download what is finished so far</a></p>{% endif %}</div>
+
 {% elif busy %}
 <div class="card"><b>Marking… {{done}} of {{rows|length}} scripts done</b><div class="bar"><i style="width:{{ (100*done/rows|length)|round }}%"></i></div>
 <p class="small mut">Each script takes a few minutes. You can close this page and come back later; the marking keeps running.{% if failed %} <span class="flag">{{failed}} failed so far.</span>{% endif %}</p></div>

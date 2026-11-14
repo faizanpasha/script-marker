@@ -34,7 +34,7 @@ def init():
         ''')
     # work that was running when the server stopped goes back to the start
     q("UPDATE scripts SET status='uploaded' WHERE status IN ('queued','marking','rendering')")
-    q("UPDATE tests SET setup_status='none' WHERE setup_status='running'")
+    q("UPDATE tests SET setup_status='error', setup_error='The server restarted while the key was being checked.' WHERE setup_status IN ('running','none')")
     if not q('SELECT 1 FROM users', one=True):
         email = os.environ.get('ADMIN_EMAIL', 'admin@example.com')
         pw = os.environ.get('ADMIN_PASSWORD') or secrets.token_urlsafe(9)
